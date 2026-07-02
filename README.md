@@ -1,100 +1,100 @@
-# Mini Claude Code — агент с нуля + конспект по harness engineering
+# Mini Claude Code — an agent from scratch + a harness-engineering study
 
-Учебный проект: с нуля собранный агент в стиле Claude Code (Python, OpenAI-совместимый
-API DeepSeek) и растущий **конспект** о том, как из минимального агентного цикла
-вырастает промышленная обвязка.
+A learning project: a from-scratch agent in the style of Claude Code (Python, on the
+OpenAI-compatible DeepSeek API), alongside a growing **study page** (*konspekt*) on how a
+minimal agent loop grows into a production-grade harness.
 
-Проект разбирает статью о harness engineering тема за темой: каждая идея сначала
-разбирается концептуально (конспект), затем воплощается в коде (`code/`).
+The project works through an article on harness engineering topic by topic: each idea is
+first explored conceptually (the study page), then implemented in code (`code/`).
 
-## 📖 Конспект (GitHub Pages)
+## 📖 Study page (GitHub Pages)
 
-Читать онлайн: **https://sh0tn1k.github.io/mini-claude-code/**
+Read online: **https://sh0tn1k.github.io/mini-claude-code/**
 
-> Страница отдаётся из папки `docs/`. Как включить Pages — см. раздел [Публикация](#публикация).
+> The page is served from the `docs/` folder. See [Publishing](#-publishing) for how Pages is set up.
 
-Конспект — концептуальный: 23 темы от мастер-лупа до дорожной карты
-(инструменты и реестр, субагенты, сжатие контекста, граф задач, фоновые задачи,
-почтовые ящики, FSM, worktree, потоковая выдача, снимки, разрешения, хуки,
-сессии, асинхронность, прерывания, prompt caching, MCP, корпоративные улучшения).
+The page is conceptual: 23 topics from the master loop to the roadmap
+(tools & registry, subagents, context compaction, task graph, background tasks,
+mailboxes, FSM, worktrees, streaming, snapshots, permissions, hooks,
+sessions, async, interrupts/steering, prompt caching, MCP, enterprise upgrades).
+It is written in Russian.
 
-## 🧩 Код агента (`code/`)
+## 🧩 The agent (`code/`)
 
-| Модуль | Что реализует |
+| Module | What it implements |
 |---|---|
-| `agent.py` | Мастер-луп: цикл по структуре ответа модели, диспетчеризация, параллелизм |
-| `tools.py` | Реестр инструментов, схемы, постепенное раскрытие |
-| `team.py` | Постоянные товарищи с почтовыми ящиками (JSONL) |
-| `task_graph.py` | Durable-граф задач с зависимостями (`.agent_tasks.json`) |
-| `background.py` | Фоновые задачи (асинхронная очередь h2A) |
-| `steering.py` | Вставка прерываний в реальном времени |
-| `cache.py` | Наблюдаемость prompt caching (HIT/MISS по usage) |
-| `permissions.py` | Разрешения по YAML-правилам (`config/permissions.yaml`) |
-| `events.py` | Шина событий и хуки жизненного цикла |
-| `sessions.py` | Сохранение / продолжение / ветвление сессий |
-| `snapshots.py` | Снимки файлов и revert |
-| `mcp_runtime.py` | Подключение внешних MCP-серверов |
-| `ui.py` | Терминальный вывод (rich) |
+| `agent.py` | Master loop: iterate on the *structure* of the model's reply, dispatch, parallelism |
+| `tools.py` | Tool registry, schemas, progressive disclosure |
+| `team.py` | Persistent teammates with mailboxes (JSONL) |
+| `task_graph.py` | Durable task graph with dependencies (`.agent_tasks.json`) |
+| `background.py` | Background tasks (async notification queue, h2A) |
+| `steering.py` | Real-time interrupt injection (steering) |
+| `cache.py` | Prompt-caching observability (HIT/MISS from usage) |
+| `permissions.py` | Permission rules via YAML (`config/permissions.yaml`) |
+| `events.py` | Event bus and lifecycle hooks |
+| `sessions.py` | Save / resume / branch sessions |
+| `snapshots.py` | File snapshots and revert |
+| `mcp_runtime.py` | Connecting external MCP servers |
+| `ui.py` | Terminal output (rich) |
 
-Направления дальнейшего развития — в [`code/ROADMAP.md`](code/ROADMAP.md).
+Future directions live in [`code/ROADMAP.md`](code/ROADMAP.md).
 
-## 🚀 Запуск
+## 🚀 Running
 
-Нужен Python 3.11+.
+Requires Python 3.11+.
 
 ```bash
 cd code
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-cp .env.example .env          # затем впиши свой ключ DeepSeek в .env
+cp .env.example .env          # then put your DeepSeek key in .env
 python agent.py
 ```
 
-Ключ DeepSeek берётся на https://platform.deepseek.com и кладётся в `code/.env`
-(этот файл в `.gitignore` и в репозиторий не попадает).
+Get a DeepSeek key at https://platform.deepseek.com and place it in `code/.env`
+(this file is in `.gitignore` and never reaches the repository).
 
-### Опционально: MCP-серверы
+### Optional: MCP servers
 
-Из **корня репозитория** (конфиг читается из корневого `config/`):
+From the **repository root** (the MCP config is read from the root-level `config/`):
 
 ```bash
-cp config/mcp_config.yaml.example config/mcp_config.yaml   # и отредактируй под свои серверы
+cp config/mcp_config.yaml.example config/mcp_config.yaml   # then edit for your servers
 ```
 
-Без конфига агент запускается без MCP-инструментов.
+Without a config, the agent starts with no MCP tools.
 
-## 📁 Структура репозитория
+## 📁 Repository layout
 
 ```
 .
-├── code/            # агент (Python)
+├── code/            # the agent (Python)
 │   ├── agent.py … mcp_runtime.py
 │   ├── config/      # permissions.yaml
 │   ├── requirements.txt
 │   └── .env.example
-├── config/          # mcp_config.yaml.example (конфиг MCP читается отсюда)
+├── config/          # mcp_config.yaml.example (MCP config is read from here)
 ├── docs/            # GitHub Pages
-│   └── index.html   # конспект
-├── konspekt.html    # рабочая копия конспекта (источник для docs/index.html)
+│   └── index.html   # the study page
+├── konspekt.html    # working copy of the study page (source for docs/index.html)
 ├── LICENSE
 └── README.md
 ```
 
-> При правке `konspekt.html` не забудь пересинхронизировать страницу Pages:
-> `cp konspekt.html docs/index.html`.
+> When you edit `konspekt.html`, re-sync the Pages copy: `cp konspekt.html docs/index.html`.
 
-## 🌐 Публикация
+## 🌐 Publishing
 
-1. Создай публичный репозиторий `mini-claude-code` на GitHub.
-2. Запушь ветку `main`.
+1. Create a public `mini-claude-code` repository on GitHub.
+2. Push the `main` branch.
 3. Settings → Pages → **Deploy from a branch** → `main` / `/docs` → Save.
-4. Через минуту конспект будет доступен по адресу выше.
+4. After a minute the study page will be live at the URL above.
 
-## Лицензия
+## License
 
 [MIT](LICENSE) © 2026 Artem Kondratiev
 
-Код агента — учебная реализация принципов harness engineering, не связанная с
-Anthropic; «Claude Code» упоминается как предмет изучения. Исходная статья (PDF/перевод)
-в репозиторий не включена — это чужой копирайт.
+The agent is an educational implementation of harness-engineering principles, unaffiliated
+with Anthropic; "Claude Code" is referenced only as the subject of study. The source
+article (PDF/translation) is not included in the repository — it is third-party copyright.
