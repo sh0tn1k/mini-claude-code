@@ -23,7 +23,7 @@ always_deny:
     reason: "Скачивание с прямым пайпом в shell заблокировано"
 
 always_allow:
-  - pattern: "^(read_file|list_dir|glob|grep|list_tasks|team_status) "
+  - pattern: "^(Read|Glob|Grep|list_dir|list_tasks|team_status) "
     reason: "Чтение/поиск — всегда безопасно"
   - pattern: "^bash (ls|cat|pwd)( |$|-)"
     reason: "Просмотр файлов всегда безопасен"

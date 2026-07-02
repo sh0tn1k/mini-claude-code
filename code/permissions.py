@@ -57,7 +57,7 @@ def _subject(tool_name: str, args: dict) -> str:
     после имени инструмента). Для остального — имя инструмента + значения
     аргументов (чтобы '\\.env' поймал доступ к .env по пути в любом инструменте).
     """
-    if tool_name == "bash":
+    if tool_name == "Bash":
         return f"bash {args.get('command', '')}"
     vals = " ".join(str(v) for v in args.values())
     return f"{tool_name} {vals}".rstrip()

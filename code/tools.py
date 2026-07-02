@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -37,35 +38,62 @@ class Tool:
 
 # --- сами функции-инструменты ---------------------------------------------
 
-def _read_file(path: str, offset: int = 0, limit: int = 200) -> str:
+# Настоящий Claude Code требует Read перед Edit/перезаписью: править «вслепую»
+# опасно. Обвязка запоминает, какие файлы модель уже прочитала в этой сессии, —
+# по непрочитанному файлу Edit/Write отклоняются (см. ниже).
+_READ_FILES: set[str] = set()
+
+
+def _key(file_path: str) -> str:
+    """Ключ файла для трекинга: нормализуем относительность и регистр под ОС."""
+    return os.path.normcase(os.path.abspath(file_path))
+
+
+def _mark_read(file_path: str) -> None:
+    _READ_FILES.add(_key(file_path))
+
+
+def _was_read(file_path: str) -> bool:
+    return _key(file_path) in _READ_FILES
+
+
+def _read_file(file_path: str, offset: int = 0, limit: int = 200) -> str:
     """Читаем файл кусками (offset/limit по строкам).
 
     Почему кусками, а не целиком: контекст — дорогой ресурс. Берём ровно
     столько строк, сколько нужно. Большой файл модель прочитает за несколько
-    витков, каждый раз сдвигая offset.
+    витков, каждый раз сдвигая offset. Факт чтения запоминаем — он открывает
+    последующую правку файла (см. _edit_file/_write_file).
     """
-    p = Path(path)
+    p = Path(file_path)
     if not p.exists():
-        return f"ОШИБКА: файла нет: {path}"
+        return f"ОШИБКА: файла нет: {file_path}"
     lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
     chunk = lines[offset:offset + limit]
     numbered = "\n".join(f"{i + offset + 1}\t{line}" for i, line in enumerate(chunk))
     tail = "" if offset + limit >= len(lines) else f"\n... (ещё {len(lines) - offset - limit} строк, сдвинь offset)"
+    _mark_read(file_path)
     return numbered + tail if numbered else "(пусто)"
 
 
-def _write_file(path: str, content: str) -> str:
+def _write_file(file_path: str, content: str) -> str:
     """Записываем файл целиком. Пишущая операция — НЕ read_only.
 
-    Перед перезаписью КОД молча снимает снимок прежнего состояния (тема 14):
-    если правка что-то сломает, revert_file вернёт файл одним вызовом. Снимок
-    делает обвязка, а не модель, — страховка срабатывает всегда.
+    Как в настоящем Claude Code: перезаписать СУЩЕСТВУЮЩИЙ файл, который в этой
+    сессии ещё не читали, нельзя (сначала Read) — страховка от затирания
+    вслепую; новый файл создаём свободно. Перед перезаписью КОД молча снимает
+    снимок прежнего состояния (тема 14): если правка что-то сломает, revert_file
+    вернёт файл одним вызовом. Снимок делает обвязка, а не модель.
     """
-    snapshots.snapshot(path)
-    p = Path(path)
+    p = Path(file_path)
+    if p.exists() and not _was_read(file_path):
+        return ("ОШИБКА: файл существует, но не прочитан в этой сессии. "
+                "Сначала прочитай его (Read), затем перезаписывай (Write).")
+    snapshots.snapshot(file_path)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
-    return f"OK: записано {len(content)} символов в {path} (снимок сохранён — можно revert_file)"
+    _mark_read(file_path)   # после записи содержимое известно — правки разрешены
+    return f"OK: записано {len(content)} символов в {file_path} (снимок сохранён — можно revert_file)"
 
 
 def _list_dir(path: str = ".") -> str:
@@ -77,44 +105,55 @@ def _list_dir(path: str = ".") -> str:
     return "\n".join(("[dir] " if e.is_dir() else "      ") + e.name for e in entries) or "(пусто)"
 
 
-def _bash(command: str, background: bool = False) -> str:
+def _bash(command: str, timeout: int = 120000, run_in_background: bool = False,
+          description: str = "") -> str:
     """Выполнить shell-команду. Пишущая/опасная — НЕ read_only.
 
-    background=True — уводим команду в отдельный поток и возвращаемся СРАЗУ
-    (см. конспект, тема 8): для долгих операций (тесты, сборка, миграция),
-    результат которых не нужен для следующего шага. Итог придёт позже
-    отдельным сообщением. Выбор фон/не-фон делает модель, не обвязка.
+    run_in_background=True — уводим команду в отдельный поток и возвращаемся
+    СРАЗУ (см. конспект, тема 8): для долгих операций (тесты, сборка, миграция),
+    результат которых не нужен для следующего шага. Итог придёт позже отдельным
+    сообщением. timeout — в миллисекундах, как в настоящем Claude Code (по
+    умолчанию 120000, максимум 600000). Выбор фон/не-фон делает модель, не обвязка.
     """
-    if background:
+    if run_in_background:
         return bgexec.launch(command)
+    timeout_s = min(max(1, int(timeout) // 1000), 600)
     try:
-        r = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
+        r = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=timeout_s)
     except subprocess.TimeoutExpired:
-        return "ОШИБКА: таймаут 30с"
+        return f"ОШИБКА: таймаут {timeout_s}с"
     out = (r.stdout or "") + (r.stderr or "")
     return f"(код выхода {r.returncode})\n{out.strip()}" or "(пустой вывод)"
 
 
-def _edit_file(path: str, old_string: str, new_string: str) -> str:
+def _edit_file(file_path: str, old_string: str, new_string: str,
+               replace_all: bool = False) -> str:
     """Точечная правка: заменить кусок текста на новый.
 
     В отличие от write_file (перезаписывает целиком), edit меняет только
-    найденный фрагмент. old_string должен встречаться РОВНО один раз — иначе
-    непонятно, какое из вхождений менять, и мы отказываемся (защита от
-    случайной массовой замены). Пишущая операция — НЕ read_only.
+    найденный фрагмент. Как в настоящем Claude Code: файл нужно СНАЧАЛА
+    прочитать (Read) — правка вслепую отклоняется. По умолчанию old_string
+    должен встречаться РОВНО один раз (иначе непонятно, какое вхождение менять);
+    replace_all=true меняет все вхождения разом. Пишущая операция — НЕ read_only.
     """
-    p = Path(path)
+    p = Path(file_path)
     if not p.exists():
-        return f"ОШИБКА: файла нет: {path}"
+        return f"ОШИБКА: файла нет: {file_path}"
+    if not _was_read(file_path):
+        return ("ОШИБКА: файл не прочитан в этой сессии. "
+                "Сначала прочитай его (Read), затем правь (Edit).")
     text = p.read_text(encoding="utf-8", errors="replace")
     count = text.count(old_string)
     if count == 0:
         return "ОШИБКА: old_string не найден в файле"
-    if count > 1:
-        return f"ОШИБКА: old_string встречается {count} раз — уточни его, нужно ровно 1 совпадение"
-    snapshots.snapshot(path)   # снимок ДО правки — как и в write_file (тема 14)
+    if count > 1 and not replace_all:
+        return (f"ОШИБКА: old_string встречается {count} раз — уточни его "
+                "(нужно ровно 1 совпадение) или передай replace_all=true")
+    snapshots.snapshot(file_path)   # снимок ДО правки — как и в write_file (тема 14)
     p.write_text(text.replace(old_string, new_string), encoding="utf-8")
-    return f"OK: заменено в {path} (снимок сохранён — можно revert_file)"
+    _mark_read(file_path)
+    where = f"все {count} вхождений" if replace_all else "1 вхождение"
+    return f"OK: заменено ({where}) в {file_path} (снимок сохранён — можно revert_file)"
 
 
 def _revert_file(path: str) -> str:
@@ -136,11 +175,14 @@ def _glob(pattern: str, path: str = ".") -> str:
     return "\n".join(hits) if hits else "(ничего не найдено)"
 
 
-def _grep(pattern: str, path: str = ".", glob: str = "**/*") -> str:
+def _grep(pattern: str, path: str = ".", glob: str = "**/*",
+          output_mode: str = "content") -> str:
     """Искать строки по регулярке в файлах. Read-only.
 
-    Возвращает совпадения в виде путь:номер_строки: текст. Идейно это
-    мини-ripgrep: модель ищет, где что лежит, не читая файлы целиком.
+    output_mode: 'content' — строки вида путь:номер: текст (по умолчанию);
+    'files_with_matches' — только пути файлов с совпадениями; 'count' — число
+    совпадений на файл. Идейно это мини-ripgrep: модель ищет, где что лежит,
+    не читая файлы целиком.
     """
     import re
     try:
@@ -148,20 +190,35 @@ def _grep(pattern: str, path: str = ".", glob: str = "**/*") -> str:
     except re.error as e:
         return f"ОШИБКА: плохая регулярка: {e}"
     base = Path(path)
-    out: list[str] = []
+    matches: list[tuple[str, int, str]] = []
     for f in sorted(base.glob(glob)):
         if not f.is_file():
             continue
         try:
             for n, line in enumerate(f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
                 if rx.search(line):
-                    out.append(f"{f}:{n}: {line.strip()}")
-                    if len(out) >= 200:
-                        out.append("... (обрезано на 200 совпадениях)")
-                        return "\n".join(out)
+                    matches.append((str(f), n, line.strip()))
         except OSError:
             continue
-    return "\n".join(out) if out else "(совпадений нет)"
+        if len(matches) >= 200:
+            break
+    if not matches:
+        return "(совпадений нет)"
+    truncated = len(matches) >= 200
+    if output_mode == "files_with_matches":
+        files: list[str] = []
+        for f, _, _ in matches:
+            if f not in files:
+                files.append(f)
+        return "\n".join(files)
+    if output_mode == "count":
+        from collections import Counter
+        counts = Counter(f for f, _, _ in matches)
+        return "\n".join(f"{f}: {n}" for f, n in counts.items())
+    out = [f"{f}:{n}: {ln}" for f, n, ln in matches]
+    if truncated:
+        out.append("... (обрезано на 200 совпадениях)")
+    return "\n".join(out)
 
 
 # Список задач живёт прямо в обвязке — как и план в контексте, но теперь явно.
@@ -289,37 +346,44 @@ REGISTRY: dict[str, Tool] = {}
 # было бы раскрывать остальные. Это «уровень 0» механики раскрытия.
 META_TOOLS: tuple[str, ...] = ("tool_search", "load_skill")
 
+# Ядро — как в настоящем Claude Code: эти инструменты доступны ВСЕГДА, каждый
+# ход, без tool_search. Прогрессивное раскрытие никуда не делось, но применяется
+# только к ДОПОЛНИТЕЛЬНЫМ инструментам (снимки/откат, durable-граф, команда, MCP)
+# и к навыкам — ровно так настоящий Claude Code прячет за поиском MCP-инструменты,
+# а не Read/Edit/Bash.
+CORE_TOOLS: tuple[str, ...] = ("Read", "Write", "Edit", "Bash", "Glob", "Grep", "Task", "TodoWrite")
+
 
 def register(tool: Tool) -> None:
     REGISTRY[tool.name] = tool
 
 
 register(Tool(
-    name="read_file",
-    description="Прочитать текстовый файл по строкам (offset/limit). Возвращает строки с номерами.",
+    name="Read",
+    description="Прочитать текстовый файл по строкам (offset/limit). Возвращает строки с номерами. Читай файл ПЕРЕД тем, как его править (Edit/Write).",
     parameters={
         "type": "object",
         "properties": {
-            "path": {"type": "string", "description": "путь к файлу"},
+            "file_path": {"type": "string", "description": "путь к файлу"},
             "offset": {"type": "integer", "description": "с какой строки (0 = начало)"},
             "limit": {"type": "integer", "description": "сколько строк за раз"},
         },
-        "required": ["path"],
+        "required": ["file_path"],
     },
     handler=_read_file,
     read_only=True,
 ))
 
 register(Tool(
-    name="write_file",
-    description="Записать (перезаписать) текстовый файл целиком.",
+    name="Write",
+    description="Записать (перезаписать) текстовый файл целиком. Существующий файл сначала прочитай (Read).",
     parameters={
         "type": "object",
         "properties": {
-            "path": {"type": "string"},
+            "file_path": {"type": "string"},
             "content": {"type": "string"},
         },
-        "required": ["path", "content"],
+        "required": ["file_path", "content"],
     },
     handler=_write_file,
     read_only=False,
@@ -338,21 +402,29 @@ register(Tool(
 ))
 
 register(Tool(
-    name="bash",
+    name="Bash",
     description=(
         "Выполнить shell-команду и вернуть её вывод. Для ДОЛГИХ операций (тесты, "
         "сборка, миграция), результат которых не нужен для следующего шага, "
-        "ставь background=true: команда уйдёт в фон, ты сразу получишь управление "
-        "и сможешь заняться другой независимой работой, а итог придёт позже "
-        "отдельным сообщением. Если результат нужен прямо сейчас — не ставь фон."
+        "ставь run_in_background=true: команда уйдёт в фон, ты сразу получишь "
+        "управление, а итог придёт позже отдельным сообщением. Для поиска по "
+        "файлам/коду бери Grep/Glob, а не `grep`/`find` через Bash."
     ),
     parameters={
         "type": "object",
         "properties": {
             "command": {"type": "string"},
-            "background": {
+            "timeout": {
+                "type": "integer",
+                "description": "таймаут в миллисекундах (по умолчанию 120000, максимум 600000)",
+            },
+            "run_in_background": {
                 "type": "boolean",
                 "description": "запустить в фоне (для долгих операций, результат которых не нужен немедленно)",
+            },
+            "description": {
+                "type": "string",
+                "description": "короткое описание команды (5–10 слов)",
             },
         },
         "required": ["command"],
@@ -362,16 +434,17 @@ register(Tool(
 ))
 
 register(Tool(
-    name="edit_file",
-    description="Точечно заменить фрагмент текста в файле. old_string должен встречаться ровно один раз.",
+    name="Edit",
+    description="Точечно заменить фрагмент текста в файле. Файл сначала прочитай (Read). old_string должен встречаться ровно один раз — либо передай replace_all=true, чтобы заменить все вхождения.",
     parameters={
         "type": "object",
         "properties": {
-            "path": {"type": "string"},
+            "file_path": {"type": "string"},
             "old_string": {"type": "string", "description": "что заменить (уникальный фрагмент)"},
             "new_string": {"type": "string", "description": "на что заменить"},
+            "replace_all": {"type": "boolean", "description": "заменить все вхождения (по умолчанию false)"},
         },
-        "required": ["path", "old_string", "new_string"],
+        "required": ["file_path", "old_string", "new_string"],
     },
     handler=_edit_file,
     read_only=False,
@@ -398,7 +471,7 @@ register(Tool(
 ))
 
 register(Tool(
-    name="glob",
+    name="Glob",
     description="Найти файлы по маске, например **/*.py. Возвращает список путей.",
     parameters={
         "type": "object",
@@ -413,14 +486,19 @@ register(Tool(
 ))
 
 register(Tool(
-    name="grep",
-    description="Искать строки по регулярному выражению в файлах. Возвращает путь:строка: текст.",
+    name="Grep",
+    description="Искать строки по регулярному выражению в файлах. output_mode: content (путь:строка: текст), files_with_matches (только пути) или count.",
     parameters={
         "type": "object",
         "properties": {
             "pattern": {"type": "string", "description": "регулярка для поиска"},
             "path": {"type": "string", "description": "где искать (по умолчанию .)"},
             "glob": {"type": "string", "description": "маска файлов, по умолчанию **/*"},
+            "output_mode": {
+                "type": "string",
+                "enum": ["content", "files_with_matches", "count"],
+                "description": "формат вывода (по умолчанию content)",
+            },
         },
         "required": ["pattern"],
     },
@@ -442,6 +520,7 @@ register(Tool(
                     "properties": {
                         "content": {"type": "string"},
                         "status": {"type": "string", "enum": ["pending", "in_progress", "done"]},
+                        "activeForm": {"type": "string", "description": "формулировка этапа в процессе (напр. «Пишу тесты»)"},
                     },
                     "required": ["content", "status"],
                 },
@@ -642,7 +721,7 @@ register(Tool(
 
 
 register(Tool(
-    name="run_subagent",
+    name="Task",
     description=(
         "Запустить субагента для изолированной подзадачи (например исследовать "
         "часть кодовой базы). Субагент работает в СВОЁМ контексте и вернёт тебе "
@@ -652,12 +731,14 @@ register(Tool(
     parameters={
         "type": "object",
         "properties": {
-            "task": {
+            "description": {"type": "string", "description": "короткое (3–5 слов) название подзадачи"},
+            "prompt": {
                 "type": "string",
                 "description": "что субагент должен сделать; пиши самодостаточно — он не видит твой диалог",
             },
+            "subagent_type": {"type": "string", "description": "тип субагента (по умолчанию general-purpose)"},
         },
-        "required": ["task"],
+        "required": ["prompt"],
     },
     handler=_subagent_placeholder,
     read_only=False,   # упрощённо: пишущий — гоняем по очереди (см. конспект, тема 4)
@@ -707,9 +788,9 @@ register(Tool(
 
 
 def deferred_tool_names(exclude: tuple[str, ...] = ()) -> list[str]:
-    """Имена «скрытых» инструментов (всё, кроме мета-инструментов и exclude)."""
+    """Имена «скрытых» (дополнительных) инструментов — всё, кроме мета-, ядра и exclude."""
     return [n for n in REGISTRY
-            if n not in META_TOOLS and n not in exclude]
+            if n not in META_TOOLS and n not in CORE_TOOLS and n not in exclude]
 
 
 def catalog_text(exclude: tuple[str, ...] = ()) -> str:
