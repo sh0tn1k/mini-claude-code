@@ -1,0 +1,22 @@
+# Пример конфигурации MCP-серверов (тема 21).
+# Скопируй в mcp_config.yaml и правь под себя. Пока файла mcp_config.yaml нет —
+# агент просто работает без MCP-серверов.
+#
+# Нужны пакеты: pip install mcp pyyaml
+#
+# Каждый сервер поднимается как отдельный процесс (транспорт stdio); при старте
+# агент вызывает у него list_tools() и регистрирует инструменты под именем
+# mcp__<name>__<tool> в общем реестре — наравне со встроенными.
+
+servers:
+  # Файловый сервер из официальных примеров MCP (через npx).
+  - name: filesystem
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+
+  # Git-сервер (через uvx, пакет mcp-server-git).
+  - name: git
+    transport: stdio
+    command: uvx
+    args: ["mcp-server-git", "--repository", "."]

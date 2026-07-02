@@ -1,0 +1,42 @@
+# --- Секреты: НИКОГДА не коммитить ---
+.env
+code/.env
+**/.env
+
+# --- Артефакты выполнения агента ---
+code/.agent_sessions/
+code/.agent_team/
+code/.agent_tasks.json
+code/.agent_tasks.json.tmp
+code/.agent_events.log
+**/.agent_*
+
+# --- Локальная конфигурация MCP (в репо только .example) ---
+config/mcp_config.yaml
+code/config/mcp_config.yaml
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Исходники статьи: чужой копирайт, не публикуем ---
+*.pdf
+building_claude_code_ru_translated_final.txt
+
+# --- ОС / редакторы ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

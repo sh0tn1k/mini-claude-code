@@ -1,0 +1,7 @@
+# Нормализуем переводы строк: в репозитории LF, в рабочей копии — как в ОС.
+* text=auto eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.html text eol=lf
+*.yaml text eol=lf
+*.txt text eol=lf
