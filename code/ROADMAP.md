@@ -1,35 +1,35 @@
-# Дорожная карта — как улучшить агент дальше
+# Roadmap — how to improve the agent further
 
-Обвязка собрана целиком: минимальный агентный цикл → промышленная многоагентная
-система (потоковая выдача, параллельное выполнение, кэш промпта, Redis-почтовые
-ящики, разрешения, сохранение сессий, MCP-среда). Это направления развития —
-пока НЕ реализованы. Общий принцип: улучшения ложатся «на края», ядро
-(агентный цикл) остаётся нетронутым.
+The harness is complete: from a minimal agent loop to a production-grade multi-agent
+system (streaming, parallel execution, prompt caching, Redis mailboxes, permissions,
+session persistence, MCP runtime). These are directions for growth — NOT yet
+implemented. Guiding principle: improvements go "on the edges," while the core
+(the agent loop) stays untouched.
 
-## 1. Параллельный запуск подагентов
-Сейчас подагенты в `team.py` запускаются последовательно. Рефакторинг spawn на
-`asyncio.gather` даст ведущему запускать несколько исследовательских подагентов
-одновременно (как сам Claude Code) — время исследования сокращается
-пропорционально числу параллельных агентов.
+## 1. Parallel subagent launch
+Right now subagents in `team.py` run sequentially. Refactoring spawn onto
+`asyncio.gather` would let the lead run several research subagents at once
+(the way Claude Code itself does) — research time shrinks proportionally to the
+number of parallel agents.
 
-## 2. Векторное хранилище памяти
-Долговременная память — плоский markdown, вставляемый целиком в каждую сессию.
-Замена на лёгкое векторное хранилище (например ChromaDB) позволит доставать
-семантически релевантные воспоминания, а не всю сводку — контекст остаётся
-сфокусированным по мере роста проекта.
+## 2. Vector memory store
+Long-term memory is flat markdown, injected in full into every session.
+Replacing it with a lightweight vector store (e.g. ChromaDB) would allow
+retrieving semantically relevant memories instead of the whole summary — the
+context stays focused as the project grows.
 
-## 3. Точный учёт токенов
-`cache.py` считает токены по сессии, но не раскладывает стоимость по задачам и
-типам инструментов. Журнал затрат по операциям покажет, какие вызовы дороже
-всего, и где оптимизировать.
+## 3. Precise token accounting
+`cache.py` counts tokens per session but does not break the cost down by task or
+tool type. A per-operation cost log would show which calls are the most
+expensive and where to optimize.
 
-## 4. Шина событий на webhooks
-`events.py` запускает хуки только внутри процесса. Добавление отправки событий во
-внешний HTTP-endpoint даст интеграцию со Slack / Datadog / PagerDuty без изменения
-агентного цикла.
+## 4. Webhook event bus
+`events.py` runs hooks only in-process. Adding delivery of events to an external
+HTTP endpoint would give integration with Slack / Datadog / PagerDuty without
+changing the agent loop.
 
-## 5. Фреймворк оценки (LLM-as-a-judge)
-Тесты проверяют, что обвязка работает корректно, но не то, насколько хорошо агент
-решает реальные задачи. Слой оценки LLM-as-a-judge (точность, эффективность
-использования инструментов, следование плану) превратит репозиторий из рабочей
-системы в систему, пригодную для бенчмарков.
+## 5. Evaluation framework (LLM-as-a-judge)
+Tests verify that the harness works correctly, but not how well the agent solves
+real tasks. An LLM-as-a-judge evaluation layer (accuracy, tool-use efficiency,
+plan adherence) would turn the repository from a working system into one suitable
+for benchmarking.
